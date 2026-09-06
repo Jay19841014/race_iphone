@@ -1,0 +1,307 @@
+<!DOCTYPE html>
+<html lang="zh-Hant">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1, maximum-scale=1, user-scalable=no, viewport-fit=cover">
+  <title>賽車吃金幣小遊戲</title>
+  <style>
+    * { box-sizing: border-box; }
+    html, body { margin: 0; min-height: 100%; overscroll-behavior: none; }
+    body {
+      font-family: system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
+      text-align: center;
+      background: #222;
+      color: #fff;
+      padding: max(10px, env(safe-area-inset-top)) 12px max(14px, env(safe-area-inset-bottom));
+      touch-action: manipulation;
+      user-select: none;
+      -webkit-user-select: none;
+    }
+    .game-wrap { width: min(100%, 430px); margin: 0 auto; }
+    h1 { font-size: clamp(22px, 6vw, 32px); margin: 6px 0 8px; line-height: 1.2; }
+    #scoreBoard { font-size: 20px; font-weight: 800; margin: 0 0 8px; }
+    #gameCanvas {
+      background: #333;
+      border: 4px solid #fff;
+      border-radius: 12px;
+      display: block;
+      width: min(100%, 360px);
+      height: auto;
+      aspect-ratio: 3 / 4;
+      margin: 8px auto;
+      touch-action: none;
+    }
+    .instructions { font-size: 15px; color: #ddd; margin: 8px 0 10px; line-height: 1.5; }
+    .desktop-hint { display: inline; }
+    .mobile-hint { display: none; }
+    .controls {
+      display: grid;
+      grid-template-columns: 1fr 1fr;
+      gap: 12px;
+      margin: 10px auto;
+      width: min(100%, 360px);
+    }
+    .control-btn, .restart-btn {
+      border: 0;
+      border-radius: 14px;
+      color: #fff;
+      font-weight: 800;
+      -webkit-tap-highlight-color: transparent;
+    }
+    .control-btn {
+      min-height: 68px;
+      font-size: 30px;
+      background: #3742fa;
+      box-shadow: 0 4px 0 #202bbf;
+      touch-action: none;
+    }
+    .control-btn:active, .control-btn.active {
+      transform: translateY(3px);
+      box-shadow: 0 1px 0 #202bbf;
+      background: #535dff;
+    }
+    .restart-btn {
+      font-size: 18px;
+      padding: 12px 22px;
+      background: #ff4757;
+      min-width: 160px;
+      margin-top: 4px;
+    }
+    @media (pointer: coarse), (max-width: 600px) {
+      .desktop-hint { display: none; }
+      .mobile-hint { display: inline; }
+      body { padding-left: 10px; padding-right: 10px; }
+    }
+  </style>
+</head>
+<body>
+  <main class="game-wrap">
+    <h1>🏎️ 賽車吃金幣大冒險 🏎️</h1>
+    <div id="scoreBoard">分數：<span id="score">0</span></div>
+    <canvas id="gameCanvas" width="300" height="400"></canvas>
+
+    <div id="controlStatus" style="font-size:14px;color:#9fe870;margin-top:6px;">手機控制已啟用</div>
+    <div class="controls" aria-label="賽車控制">
+      <button id="leftBtn" class="control-btn" aria-label="向左移動">⬅️</button>
+      <button id="rightBtn" class="control-btn" aria-label="向右移動">➡️</button>
+    </div>
+
+    <p class="instructions">
+      <span class="desktop-hint">使用鍵盤左、右方向鍵移動賽車。<br></span>
+      <span class="mobile-hint">按住下方左右按鈕移動賽車。<br></span>
+      避開黃車，儘量吃黃色金幣！
+    </p>
+    <button class="restart-btn" onclick="restartGame()">重新開始</button>
+  </main>
+
+  <script>
+    const canvas = document.getElementById('gameCanvas');
+    const ctx = canvas.getContext('2d');
+    const scoreEl = document.getElementById('score');
+    const leftBtn = document.getElementById('leftBtn');
+    const rightBtn = document.getElementById('rightBtn');
+
+    let player = { x: 130, y: 330, width: 40, height: 60, speed: 5 };
+    let obstacle = { x: Math.random() * 260, y: -60, width: 40, height: 60, speed: 3 };
+    let coin = { x: Math.random() * 270, y: -200, radius: 12, speed: 2.5 };
+
+    let score = 0;
+    let gameOver = false;
+    let animationId;
+    let leftPressed = false;
+    let rightPressed = false;
+
+    document.addEventListener('keydown', (e) => {
+      if (e.key === 'ArrowLeft') { leftPressed = true; e.preventDefault(); }
+      if (e.key === 'ArrowRight') { rightPressed = true; e.preventDefault(); }
+    }, { passive: false });
+
+    document.addEventListener('keyup', (e) => {
+      if (e.key === 'ArrowLeft') leftPressed = false;
+      if (e.key === 'ArrowRight') rightPressed = false;
+    });
+
+    function bindHoldButton(button, direction) {
+      const setPressed = (pressed) => {
+        if (direction === 'left') leftPressed = pressed;
+        if (direction === 'right') rightPressed = pressed;
+        button.classList.toggle('active', pressed);
+      };
+
+      // iPhone / iPad Safari：直接使用 touch 事件最穩定
+      button.addEventListener('touchstart', (e) => {
+        e.preventDefault();
+        setPressed(true);
+      }, { passive: false });
+      button.addEventListener('touchend', (e) => {
+        e.preventDefault();
+        setPressed(false);
+      }, { passive: false });
+      button.addEventListener('touchcancel', () => setPressed(false), { passive: false });
+
+      // Android / 新版瀏覽器
+      button.addEventListener('pointerdown', (e) => {
+        if (e.pointerType === 'touch') return; // touchstart 已處理，避免重複
+        e.preventDefault();
+        setPressed(true);
+      });
+      button.addEventListener('pointerup', (e) => {
+        if (e.pointerType === 'touch') return;
+        e.preventDefault();
+        setPressed(false);
+      });
+      button.addEventListener('pointercancel', () => setPressed(false));
+
+      // 桌機滑鼠備援
+      button.addEventListener('mousedown', (e) => {
+        e.preventDefault();
+        setPressed(true);
+      });
+      button.addEventListener('mouseup', (e) => {
+        e.preventDefault();
+        setPressed(false);
+      });
+      button.addEventListener('mouseleave', () => setPressed(false));
+
+      button.addEventListener('contextmenu', (e) => e.preventDefault());
+    }
+
+    bindHoldButton(leftBtn, 'left');
+    bindHoldButton(rightBtn, 'right');
+
+    // 手指離開按鈕區或頁面時，避免卡住持續移動
+    document.addEventListener('touchend', () => {
+      leftPressed = false;
+      rightPressed = false;
+      leftBtn.classList.remove('active');
+      rightBtn.classList.remove('active');
+    }, { passive: true });
+
+    window.addEventListener('blur', () => {
+      leftPressed = false;
+      rightPressed = false;
+      leftBtn.classList.remove('active');
+      rightBtn.classList.remove('active');
+    });
+
+    function drawPlayer() {
+      ctx.fillStyle = '#ff4757';
+      ctx.fillRect(player.x, player.y, player.width, player.height);
+      ctx.fillStyle = '#00d2d3';
+      ctx.fillRect(player.x + 5, player.y + 10, 30, 15);
+    }
+
+    function drawObstacle() {
+      ctx.fillStyle = '#ffa502';
+      ctx.fillRect(obstacle.x, obstacle.y, obstacle.width, obstacle.height);
+      ctx.fillStyle = '#2e86de';
+      ctx.fillRect(obstacle.x + 5, obstacle.y + 35, 30, 15);
+    }
+
+    function drawCoin() {
+      ctx.beginPath();
+      ctx.arc(coin.x, coin.y, coin.radius, 0, Math.PI * 2);
+      ctx.fillStyle = '#ffd700';
+      ctx.fill();
+      ctx.lineWidth = 2;
+      ctx.strokeStyle = '#ff9f43';
+      ctx.stroke();
+      ctx.closePath();
+      ctx.fillStyle = '#ff9f43';
+      ctx.font = 'bold 12px sans-serif';
+      ctx.fillText('$', coin.x - 3.5, coin.y + 4);
+    }
+
+    function update() {
+      if (gameOver) return;
+
+      if (leftPressed && player.x > 0) player.x -= player.speed;
+      if (rightPressed && player.x < canvas.width - player.width) player.x += player.speed;
+
+      player.x = Math.max(0, Math.min(canvas.width - player.width, player.x));
+      obstacle.y += obstacle.speed;
+      coin.y += coin.speed;
+
+      if (obstacle.y > canvas.height) {
+        obstacle.y = -60;
+        obstacle.x = Math.floor(Math.random() * (canvas.width - obstacle.width));
+        score += 10;
+        scoreEl.textContent = score;
+        if (score % 50 === 0) obstacle.speed += 0.5;
+      }
+
+      if (coin.y > canvas.height) resetCoin();
+
+      if (
+        player.x < coin.x + coin.radius &&
+        player.x + player.width > coin.x - coin.radius &&
+        player.y < coin.y + coin.radius &&
+        player.y + player.height > coin.y - coin.radius
+      ) {
+        score += 20;
+        scoreEl.textContent = score;
+        resetCoin();
+      }
+
+      if (
+        player.x < obstacle.x + obstacle.width &&
+        player.x + player.width > obstacle.x &&
+        player.y < obstacle.y + obstacle.height &&
+        player.y + player.height > obstacle.y
+      ) {
+        gameOver = true;
+      }
+
+      ctx.clearRect(0, 0, canvas.width, canvas.height);
+      ctx.strokeStyle = '#fff';
+      ctx.lineWidth = 1;
+      ctx.setLineDash([15, 15]);
+      ctx.beginPath();
+      ctx.moveTo(150, 0);
+      ctx.lineTo(150, 400);
+      ctx.stroke();
+      ctx.setLineDash([]);
+
+      drawPlayer();
+      drawObstacle();
+      drawCoin();
+
+      if (gameOver) {
+        ctx.fillStyle = 'rgba(0,0,0,.55)';
+        ctx.fillRect(0, 155, canvas.width, 80);
+        ctx.fillStyle = 'white';
+        ctx.textAlign = 'center';
+        ctx.font = 'bold 26px sans-serif';
+        ctx.fillText('💥 遊戲結束！', canvas.width / 2, 205);
+        ctx.textAlign = 'start';
+      } else {
+        animationId = requestAnimationFrame(update);
+      }
+    }
+
+    function resetCoin() {
+      coin.y = -100 - Math.random() * 150;
+      coin.x = 20 + Math.random() * (canvas.width - 40);
+    }
+
+    function restartGame() {
+      cancelAnimationFrame(animationId);
+      player.x = 130;
+      obstacle.y = -60;
+      obstacle.x = Math.random() * (canvas.width - obstacle.width);
+      obstacle.speed = 3;
+      resetCoin();
+      score = 0;
+      gameOver = false;
+      leftPressed = false;
+      rightPressed = false;
+      leftBtn.classList.remove('active');
+      rightBtn.classList.remove('active');
+      scoreEl.textContent = score;
+      update();
+    }
+
+    update();
+  </script>
+</body>
+</html>
